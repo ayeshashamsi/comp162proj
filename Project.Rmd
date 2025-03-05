@@ -1,0 +1,242 @@
+---
+title: "Oral Cancer Trends: Pakistan"
+author: "Ayesha Shamsi"
+date: "2025-03-05"
+output: html_document
+runtime: shiny
+---
+
+[Link to Dataset](https://docs.google.com/spreadsheets/d/1H1wBPrzqzt7vhjLHNJI_ktnYj4qRohTM/edit?usp=drive_link&ouid=110881487042061949976&rtpof=true&sd=true)
+
+## Description of data set:
+My data set is 2238 cases on Oral Cancer of patients from Aga Khan University Hospital Karachi, Pakistan from May 2011 through December 2020. There are variables pertaining to tumor size, treatment, survival rate, tobacco use, marital status etc.
+
+## Motivation: 
+I am interested in analysing more social aspects like the types of tobacco use, difference in uses amongst people and the effects of tumor sizes on important factors like survival rates to see if I can draw new conclusions about the prevalence of diagnosis and oral cancer in Pakistan. 
+
+## Quick Summary 
+Amongst our population, indivicuals with smaller tumor sizes had generally better survival probabilities. The most common form of tobacco consumption was chewaable, with a higher prevelance in men than women.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(survival)
+library(survminer)
+library(janitor)
+
+
+getwd()
+setwd("/Users/ayeshashamsi/Desktop/COMP 162")
+df <- read.csv("project_data.csv", stringsAsFactors = TRUE)
+
+str(df)
+summary(df)
+View(df)
+
+
+# Data Cleaning
+
+df <- clean_names(df)
+colnames(df)
+df <- df %>%
+  filter(!(marital_status_at_dx == "UNKNOWN" | tumor_size_mm == "NA" |regional_nodes_examined == "NA" | patient_history_tobacco == "NA" | regional_nodes_positive == "NA"))
+
+# Convert columns to numeric, handling non-numeric values
+df <- df %>%
+  mutate(
+    tumor_size_mm = as.numeric(ifelse(grepl("^[0-9]+$", tumor_size_mm), tumor_size_mm, NA)),
+    regional_nodes_examined = as.numeric(ifelse(grepl("^[0-9]+$", regional_nodes_examined), regional_nodes_examined, NA)),
+    regional_nodes_positive = as.numeric(ifelse(grepl("^[0-9]+$", regional_nodes_positive), regional_nodes_positive, NA))
+  )
+
+```
+
+
+
+## Tumor Sizes Impact on Survival
+
+My data set was manipulated to be able to use the Kaplan Mier survival model. 
+
+Survival time was calculated by using year (assumed to be the date of diagnosis) and the date of last contact or death (assumed to be date of death) if the vital status was deceased. 
+
+The tumor sizes were also divided into less than 20, between 20-40 and above 40 based on averages. The log of tumor sizes was used for correlation analysis (both Pearsons and Spearmans) and a linear regression.
+
+
+```{r eruptions, echo=FALSE}
+
+
+# 2 QUANTITAVE PLOT
+
+# Define tumor size categories
+df <- df %>%
+  mutate(size_category = case_when(
+    tumor_size_mm < 20 ~ "Small (<20mm)",
+    tumor_size_mm >= 20 & tumor_size_mm <= 40 ~ "Medium (20-40mm)",
+    tumor_size_mm > 40 ~ "Large (>40mm)"
+  ))
+
+
+
+# Convert 'year' (diagnosis date) to Date format (YYYY-MM-DD)
+df$year <- as.Date(df$year, format = "%m/%d/%y")
+
+# Convert 'date_last_patient_contact_or_death' (last contact/death) to Date format (M/DD/YY)
+df$date_last_patient_contact_or_dea <- as.Date(df$date_last_patient_contact_or_dea, format = "%m/%d/%y")
+
+# Calculate survival time in years
+df$survival_time <- as.numeric(difftime(df$date_last_patient_contact_or_dea, df$year, units = "days")) / 365.25
+
+# Remove rows with missing survival_time 
+df <- df[!is.na(df$survival_time), ]
+
+library(survival)
+# Create survival object
+surv_obj <- Surv(time = df$survival_time, event = df$vital_status == "DEAD(0)")
+
+# Fit Kaplan-Meier survival model
+km_fit <- survfit(surv_obj ~ size_category, data = df)
+
+library(survminer)
+
+
+# Plot Kaplan-Meier survival curves
+ggsurvplot(
+  km_fit, 
+  data = df, 
+  pval = TRUE, 
+  risk.table = TRUE, 
+  ggtheme = theme_minimal(),
+  title = "Kaplan-Meier Survival by Tumor Size",
+  legend.title = "Tumor Size Category",
+  xlab = "Time (Years)",
+  ylab = "Survival Probability"
+)
+
+df <- df %>%
+  mutate(log_tumor_size = log(tumor_size_mm + 1))
+
+df_clean <- df %>%
+  filter(!is.na(log_tumor_size) & !is.na(survival_time))
+
+# Compute Pearson and Spearman correlations between log_tumor_size and survival_time
+pearson_cor <- cor(df$log_tumor_size, df$survival_time, method = "pearson", use = "complete.obs")
+spearman_cor <- cor(df$log_tumor_size, df$survival_time, method = "spearman", use = "complete.obs")
+cat("Pearson Correlation:", pearson_cor, "\n")
+cat("Spearman Correlation:", spearman_cor, "\n")
+
+
+# Fit linear regression model
+lm_model <- lm(survival_time ~ log_tumor_size, data = df)
+summary(lm_model)
+
+```
+
+The chart and visuals show us that the survival rate for tumor sizes larger than 40 mm drop significantly compared to the smaller two categories after the first year since diagnosis. This makes sense as:
+
+-Larger tumors are generally associated with later stages of diagnosis. 
+-Smaller tumors may undergo more treatment if diagnosed sooner.
+
+Pearson correlation: -0.124
+Spearman correlation: -0.159
+
+Both correlations are negative, there is smaller survival times/chances with larger tumor sizes. However, the correlation values are generally weak, with Spearman slightly higher due to 2-3 large tumor sizes in the data set. 
+
+
+The coefficient for log_tumor_size is -0.1906, meaning that for each unit increase in log-transformed tumor size, survival time decreases by 0.19 years on average. The small p value also tells us that this relationship is statistially significant.However, the r squared value tells us that tumor size alone explains only about 1.5% of the variance in survival time. 
+
+
+This indicates that while there is a relationship, tumor size alone does not strongly predict survival time. 
+Patient genetic factors, family historyand lifestyle choices (e.g., tobacco use, diet, exercise) could influence survival beyond tumor size alone.
+
+## Most Common Tobacco use
+
+In this case we are interested to see the disttibution of different types of Tobacco use amongst the cases. We use dypler to count these variables and add a percentage for us to analyze.
+
+```{r plot, echo=FALSE, message=FALSE, warning=FALSE}
+# DYPLER plot
+
+# Quick count using dplyr and adding percentage
+tobacco_count_dplyr <- df %>%
+  count(patient_history_tobacco) %>%
+  arrange(desc(n)) %>%
+  mutate(percentage = (n / sum(n)) * 100) 
+print(tobacco_count_dplyr)
+
+ggplot(tobacco_count_dplyr, aes(x = reorder(patient_history_tobacco, -n), y = n, fill = patient_history_tobacco)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  geom_text(aes(label = paste0(round(percentage, 1), "%")), vjust = -0.3) +  # Adding percentage label
+  labs(
+    title = "Count and Percentage Distribution of Tobacco Use Categories",
+    x = "Tobacco Use Category",
+    y = "Count"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_brewer(palette = "Set3")
+
+```
+
+The most common category is Smokeless, or chewing tobacco with 39.6% of all cancer patients chosing this method. This is followed by patients who have never used tobacco, along with patients with previous use or a combination.
+
+The Never used being the second most common category tells us that there is a complex interplay of several factors beyond nicotine use like age, gender, oral hygience and lifestyle.
+
+## Chewing Tobacco use by Gender
+
+```{r tabsets, echo=FALSE}
+# Categorical and numerical
+
+# Filter for SNUFF/SMOKELESS CURRENT users
+snuff_df <- df %>%
+  filter(patient_history_tobacco == "SNUFF/SMOKELESS CURRENT") %>%
+  count(sex)
+
+# Plot
+ggplot(snuff_df, aes(x = sex, y = n, fill = sex)) +
+  geom_bar(stat = "identity") +  # Use actual counts
+  theme_minimal() +
+  labs(
+    title = "Count of SNUFF/SMOKELESS CURRENT Users by Sex",
+    x = "Sex",
+    y = "Amount of Smokers",
+    fill = "Sex"
+  ) +
+  theme(legend.position = "none") 
+
+
+df <- df %>%
+  mutate(snuff_user = ifelse(patient_history_tobacco == "SNUFF/SMOKELESS CURRENT", 1, 0))
+
+# Check distribution by sex
+table(df$snuff_user, df$sex)
+
+
+t_test_result <- t.test(snuff_user ~ sex, data = df, var.equal = TRUE)  # Use var.equal = FALSE if variances differ
+print(t_test_result)
+
+```
+
+t = -2.4993: The negative t-value indicates that the mean proportion of SNUFF/SMOKELESS CURRENT users is lower in females than in males.
+df = 1400: The degrees of freedom.
+p-value = 0.01256: Since this is less than 0.05, we reject the null hypothesis. Hence there is a statistically significant difference in the mean usage of SNUFF/SMOKELESS CURRENT between males and females.
+
+Mean Proportions:
+FEMALE = 33.7% of females use SNUFF/SMOKELESS CURRENT.
+MALE = 41.4% of males use SNUFF/SMOKELESS CURRENT.
+
+
+Our results found more men smoking chewable tobacco products than women. Although in this study, females had less use of chewable tobacco products amongst other populations and studies like this one [this one](https://pmc.ncbi.nlm.nih.gov/articles/PMC2778071/) done in Bangladesh, found more women used smokeless tobacco products than men. However, it is consistent than more men smoke overall among both studies and populations. Further analysis may be needed into specific smoking trends amongst men and women with more insight into demographics and local practices/prevelance.
+
+## Conclusion:
+
+Our analysis highlights a negative relationship between tumor size and survival time, Kaplan-Meier survival curves reinforces this trend, showing a significant drop in survival probability for tumors larger than 40 mm within the first year after diagnosis.
+
+However, it only explains about 1.5% of this trend, and further analysis could be conducted with more factors like age, lifestyle and family history to give us a better idea about survival rates. 
+
+Additionally, our data shows that smokeless tobacco (SNUFF/SMOKELESS CURRENT) is the most common form of tobacco use among patients, with a higher prevalence among men than women. Given that tobacco use is a known risk factor for various cancers, future analysis should examine its direct impact on tumor development and survival outcomes. There should also be more education and intervention on the use of chewable tobacco products and their negative effects amongst the local population.
+
+
+
